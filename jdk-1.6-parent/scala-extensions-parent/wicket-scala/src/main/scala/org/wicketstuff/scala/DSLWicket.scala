@@ -20,9 +20,10 @@ import org.apache.wicket.{ Component, Application }
 import org.apache.wicket.Page
 import org.apache.wicket.validation.IValidatable
 import org.apache.wicket.validation.IValidator
-import org.apache.wicket.markup.html.form.Check
 import org.apache.wicket.markup.html.form.CheckBox
 import org.apache.wicket.Session
+import scala.reflect.ClassTag
+import scala.language.implicitConversions
 
 trait DSLWicket {
   self: MarkupContainer ⇒
@@ -43,10 +44,12 @@ trait DSLWicket {
   def multiLineLabel[T](id: String, value: String): MultiLineLabel = { val label = new MultiLineLabel(id, value); add(label); label }
   // Label
   def label[T](id: String, model: IModel[T] = null): Label = { val label = new Label(id, model); add(label); label }
+  def labelf[T](id: String, gtr: ⇒ String): Label = { val label = new SLabel(id, gtr); add(label); label }
   def label[T](id: String, value: String): Label = { val label = new Label(id, value); add(label); label }
+
   implicit def ser2model[S <: Serializable](ser: S): IModel[S] = Model.of(ser)
-  def textField[T](id: String)(implicit m: scala.reflect.Manifest[T]): STextField[T] = {
-    val field = new TextField[T](id) with STextField[T]; field.setType(m.erasure); add(field); field
+  def textField[T](id: String)(implicit m: ClassTag[T]): STextField[T] = {
+    val field = new TextField[T](id) with STextField[T]; field.setType(m.runtimeClass); add(field); field
   }
   def emailField(id: String): STextField[String] = {
     val ef = textField[String](id)
@@ -150,7 +153,11 @@ trait DSLWicket {
   def dropDownChoice[T](id: String, choices: java.util.List[_ <: T] = null)(implicit m: scala.reflect.Manifest[T]): DropDownChoice[T] = {
     val dropdown = new DropDownChoice[T](id, choices); add(dropdown); dropdown
   }
-  def emailLink(id: String, email: String, label: String) { val el = new ExternalLink(id, "mailto:" + email, label); add(el); el; }
+  def emailLink(id: String, email: String, label: String): ExternalLink = {
+    val el = new ExternalLink(id, "mailto:" + email, label)
+    add(el)
+    el
+  }
   def emailLink(id: String, email: String) { emailLink(id, email, email) }
   def select[T](id: String) = {
     val ddc = new DropDownChoice[T](id)

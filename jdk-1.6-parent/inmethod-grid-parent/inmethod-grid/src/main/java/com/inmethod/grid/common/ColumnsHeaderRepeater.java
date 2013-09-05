@@ -1,6 +1,3 @@
-/**
- * 
- */
 package com.inmethod.grid.common;
 
 import java.util.Collection;
@@ -8,8 +5,10 @@ import java.util.Iterator;
 
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.behavior.AttributeAppender;
 import org.apache.wicket.markup.IMarkupFragment;
 import org.apache.wicket.markup.html.WebMarkupContainer;
+import org.apache.wicket.model.Model;
 import org.apache.wicket.request.Response;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.util.string.Strings;
@@ -27,9 +26,8 @@ import com.inmethod.grid.IGridSortState;
  * 
  * @author Matej Knopp
  */
-public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
+public abstract class ColumnsHeaderRepeater<M, I, S> extends WebMarkupContainer
 {
-
 	private static final long serialVersionUID = 1L;
 
 	/**
@@ -61,7 +59,7 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 		}
 
 		// create components that might be needed
-		for (IGridColumn<M, I> column : getActiveColumns())
+		for (IGridColumn<M, I, S> column : getActiveColumns())
 		{
 			String componentId = componentId(column.getId());
 
@@ -69,8 +67,7 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 			{ // if there is no component for given column, create it
 
 				if (column.getSortProperty() == null)
-				{
-					// for non sortable properties just add the component
+				{	// for non sortable properties just add the component
 					Component component = column.newHeader(componentId);
 					if (component.getId().equals(componentId) == false)
 					{
@@ -79,10 +76,9 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 					add(component);
 				}
 				else
-				{
-					// for sortable properties place the component inside SortableHeaderLinkPanel
-					SortableHeaderLinkPanel panel = new SortableHeaderLinkPanel(componentId,
-						column.getSortProperty())
+				{	// for sortable properties place the component inside SortableHeaderLinkPanel
+					SortableHeaderLinkPanel<S> panel =
+                  new SortableHeaderLinkPanel<S>(componentId, column.getSortProperty())
 					{
 						private static final long serialVersionUID = 1L;
 
@@ -101,13 +97,19 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 					add(panel);
 				}
 			}
+      if (column.getWrapText() )
+      {
+        get(componentId)
+          .add(new AttributeAppender("style",
+                                     Model.of("white-space: normal;"), "; "));
+      }
 		}
 		super.onBeforeRender();
 	}
 
 	abstract protected void sortStateChanged(AjaxRequestTarget target);
 
-	private GridSortState getSortState()
+	private GridSortState<S> getSortState()
 	{
 		return findParent(AbstractGrid.class).getSortState();
 	}
@@ -117,11 +119,11 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 	 * 
 	 * @return
 	 */
-	private IGridSortState.Direction getSortDirection(IGridColumn<M, I> column)
+	private IGridSortState.Direction getSortDirection(IGridColumn<M, I, S> column)
 	{
-		IGridSortState state = getSortState();
+		IGridSortState<S> state = getSortState();
 		// we are interested only in the column with highest priority and it must match this panel's
-// sort property
+    // sort property
 		if (state.getColumns().size() > 0 &&
 			state.getColumns().get(0).getPropertyName().equals(column.getSortProperty()))
 		{
@@ -136,12 +138,11 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 	@Override
 	protected void onRender()
 	{
-
 		Response response = RequestCycle.get().getResponse();
 
-		Collection<IGridColumn<M, I>> columns = getActiveColumns();
+		Collection<IGridColumn<M, I, S>> columns = getActiveColumns();
 
-		for (IGridColumn<M, I> column : columns)
+		for (IGridColumn<M, I, S> column : columns)
 		{
 			// render the table header opening tag with proper width
 			response.write("<th style=\"width:");
@@ -195,7 +196,7 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 	 */
 	private boolean isComponentNeeded(final String componentId)
 	{
-		for (IGridColumn<M, I> column : getActiveColumns())
+		for (IGridColumn<M, I, S> column : getActiveColumns())
 		{
 			if (componentId(column.getId()).equals(componentId))
 			{
@@ -210,7 +211,7 @@ public abstract class ColumnsHeaderRepeater<M, I> extends WebMarkupContainer
 		return columnId.replace(".", "-");
 	}
 
-	abstract Collection<IGridColumn<M, I>> getActiveColumns();
+	abstract Collection<IGridColumn<M, I, S>> getActiveColumns();
 
-	abstract int getColumnWidth(IGridColumn<M, I> column);
+	abstract int getColumnWidth(IGridColumn<M, I, S> column);
 }

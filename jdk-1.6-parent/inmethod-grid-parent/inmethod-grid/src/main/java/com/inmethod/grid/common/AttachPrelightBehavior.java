@@ -8,7 +8,7 @@ import org.apache.wicket.behavior.Behavior;
 import org.apache.wicket.request.Response;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.http.WebRequest;
-import org.apache.wicket.util.string.JavaScriptUtils;
+import org.apache.wicket.core.util.string.JavaScriptUtils;
 
 /**
  * When a single item is (rendered using Ajax this behavior makes sure that it has the prelight
@@ -28,7 +28,7 @@ public final class AttachPrelightBehavior extends Behavior
 	{
 		WebRequest request = (WebRequest)RequestCycle.get().getRequest();
 		Response response = RequestCycle.get().getResponse();
-		AbstractGrid<?, ?> grid = component.findParent(AbstractGrid.class);
+		AbstractGrid<?, ?, ?> grid = component.findParent(AbstractGrid.class);
 		if (request.isAjax() && !grid.isRendering())
 		{
 			JavaScriptUtils.writeOpenTag(response);
