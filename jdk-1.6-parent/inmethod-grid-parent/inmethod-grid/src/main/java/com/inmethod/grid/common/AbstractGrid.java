@@ -10,8 +10,9 @@ import org.apache.wicket.Component;
 import org.apache.wicket.MetaDataKey;
 import org.apache.wicket.ajax.AbstractDefaultAjaxBehavior;
 import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.ajax.IAjaxCallDecorator;
-import org.apache.wicket.ajax.calldecorator.AjaxCallDecorator;
+import org.apache.wicket.ajax.attributes.AjaxCallListener;
+import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
+import org.apache.wicket.ajax.attributes.CallbackParameter;
 import org.apache.wicket.ajax.form.AjaxFormSubmitBehavior;
 import org.apache.wicket.behavior.Behavior;
 import org.apache.wicket.markup.ComponentTag;
@@ -30,6 +31,7 @@ import org.apache.wicket.model.Model;
 import org.apache.wicket.request.resource.JavaScriptResourceReference;
 import org.apache.wicket.request.resource.PackageResourceReference;
 import org.apache.wicket.resource.CoreLibrariesContributor;
+import org.apache.wicket.util.lang.Args;
 import org.apache.wicket.util.string.AppendingStringBuffer;
 import org.apache.wicket.util.string.Strings;
 import org.apache.wicket.util.visit.IVisit;
@@ -53,9 +55,8 @@ import com.inmethod.grid.treegrid.TreeGrid;
  * 
  * @author Matej Knopp
  */
-public abstract class AbstractGrid<M, I> extends Panel
+public abstract class AbstractGrid<M, I, S> extends Panel
 {
-
 	private static final long serialVersionUID = 1L;
 
 	/**
@@ -65,7 +66,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @param model
 	 * @param columns
 	 */
-	public AbstractGrid(String id, IModel<M> model, List<IGridColumn<M, I>> columns)
+	public AbstractGrid(String id, IModel<M> model, List<IGridColumn<M, I, S>> columns)
 	{
 		super(id, model);
 
@@ -84,7 +85,6 @@ public abstract class AbstractGrid<M, I> extends Panel
 
 		WebMarkupContainer bodyContainer = new WebMarkupContainer("bodyContainer")
 		{
-
 			private static final long serialVersionUID = 1L;
 
 			@Override
@@ -101,7 +101,8 @@ public abstract class AbstractGrid<M, I> extends Panel
 		form.add(bodyContainer);
 		bodyContainer.setOutputMarkupId(true);
 
-		bodyContainer.add(new Label("firstRow", new EmptyRowModel()).setEscapeModelStrings(false));
+		bodyContainer.add(new Label("firstRow", new EmptyRowModel())
+                 .setEscapeModelStrings(false));
 
 		add(topToolbarContainer = new RepeatingView("topToolbarContainer"));
 		add(bottomToolbarContainer = new RepeatingView("bottomToolbarContainer"));
@@ -118,21 +119,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 				// since javascript can be rendered at the tail
 				// of HTML document, do not initialize data grid
 				// component until "DOM ready" event.
-				if (!getWebRequest().isAjax())
-				{
-					response.render(OnDomReadyHeaderItem.forScript(getInitializationJavascript()));
-				}
-			}
-
-			@Override
-			public void afterRender(Component component)
-			{
-				super.afterRender(component);
-
-				AjaxRequestTarget ajaxRequestTarget = getRequestCycle().find(AjaxRequestTarget.class);
-				if (ajaxRequestTarget != null) {
-					ajaxRequestTarget.appendJavaScript(getInitializationJavascript());
-				}
+				response.render(OnDomReadyHeaderItem.forScript(getInitializationJavascript()));
 			}
 		});
 
@@ -141,17 +128,18 @@ public abstract class AbstractGrid<M, I> extends Panel
 		add(submitColumnStateBehavior);
 	}
 
+	@SuppressWarnings("unchecked")
 	public Form<Void> getForm()
 	{
 		return (Form<Void>)get("form");
-	};
+	}
 
 	/**
 	 * Checks whether the column is a valid grid column
 	 * 
 	 * @param column
 	 */
-	protected void columnSanityCheck(IGridColumn<M, I> column)
+	protected void columnSanityCheck(IGridColumn<M, I, S> column)
 	{
 		String id = column.getId();
 		if (Strings.isEmpty(id))
@@ -177,22 +165,22 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * 
 	 * @param columns
 	 */
-	private void columnsSanityCheck(List<IGridColumn<M, I>> columns)
+	private void columnsSanityCheck(List<IGridColumn<M, I, S>> columns)
 	{
 		for (int i = 0; i < columns.size(); ++i)
 		{
-			IGridColumn<M, I> column = columns.get(i);
+			IGridColumn<M, I, S> column = columns.get(i);
 			columnSanityCheck(column);
 		}
 		for (int i = 0; i < columns.size(); ++i)
 		{
-			IGridColumn<M, I> column = columns.get(i);
+			IGridColumn<M, I, S> column = columns.get(i);
 
 			for (int j = 0; j < columns.size(); ++j)
 			{
 				if (i != j)
 				{
-					IGridColumn<M, I> otherColumn = columns.get(j);
+					IGridColumn<M, I, S> otherColumn = columns.get(j);
 					if (column.getId().equals(otherColumn.getId()))
 					{
 						throw new IllegalStateException("Each column must have unique id");
@@ -221,7 +209,6 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 */
 	private class SubmitColumnStateBehavior extends AbstractDefaultAjaxBehavior
 	{
-
 		private static final long serialVersionUID = 1L;
 
 		@Override
@@ -229,13 +216,22 @@ public abstract class AbstractGrid<M, I> extends Panel
 		{
 			// get the columnState request parameter (set by javascript)
 			String state = getRequest().getRequestParameters()
-				.getParameterValue("columnState")
-				.toString();
+				.getParameterValue("columnState").toString(null);
+			if(!Strings.isEmpty(state)){
+				// apply it to current state
+				columnState.updateColumnsState(state);
 
-			// apply it to current state
-			columnState.updateColumnsState(state);
+				onColumnStateChanged();
+			}
+		}
+    
+    @Override
+		protected void updateAjaxAttributes(AjaxRequestAttributes attributes)
+		{
+			super.updateAjaxAttributes(attributes);
 
-			onColumnStateChanged();
+			CharSequence columnStateParameter = "return {'columnState': columnState}";
+			attributes.getDynamicExtraParameters().add(columnStateParameter);
 		}
 
 		/**
@@ -244,13 +240,9 @@ public abstract class AbstractGrid<M, I> extends Panel
 		@Override
 		public CharSequence getCallbackScript()
 		{
-			// this assumes presence of columnState variable in the surrounding
-			// javacript context
-			return generateCallbackScript("wicketAjaxGet('" + getCallbackUrl() +
-				"&columnState=' + columnState");
+			return getCallbackFunction(CallbackParameter.context("columnState"));
 		}
-
-	};
+	}
 
 	/**
 	 * Manages order, visibility and sizes of columns.
@@ -299,7 +291,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	{
 		super.onInitialize();
 
-		for (IGridColumn<M, I> column : columns)
+		for (IGridColumn<M, I, S> column : columns)
 		{
 			column.setGrid(this);
 		}
@@ -313,6 +305,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 		super.onBeforeRender();
 	}
 
+  //TODO: w/ the OnInitialize -> OnBeforeRender can FLAG_RENDERING be removed?
 	@Override
 	protected void onAfterRender()
 	{
@@ -336,12 +329,9 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @param toolbar
 	 * @param container
 	 */
-	private void addToolbar(AbstractToolbar<M, I> toolbar, RepeatingView container)
+	private void addToolbar(AbstractToolbar<M, I, S> toolbar, RepeatingView container)
 	{
-		if (toolbar == null)
-		{
-			throw new IllegalArgumentException("argument 'toolbar' cannot be null");
-		}
+    Args.notNull(toolbar, "toolbar");
 
 		// create a container item for the toolbar (required by repeating view)
 		WebMarkupContainer item = new WebMarkupContainer(container.newChildId());
@@ -358,7 +348,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @param toolbar
 	 *            toolbar instance
 	 */
-	public void addTopToolbar(AbstractToolbar<M, I> toolbar)
+	public void addTopToolbar(AbstractToolbar<M, I, S> toolbar)
 	{
 		addToolbar(toolbar, topToolbarContainer);
 	}
@@ -370,7 +360,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @param toolbar
 	 *            toolbar instance
 	 */
-	public void addBottomToolbar(AbstractToolbar<M, I> toolbar)
+	public void addBottomToolbar(AbstractToolbar<M, I, S> toolbar)
 	{
 		addToolbar(toolbar, bottomToolbarContainer);
 	}
@@ -382,7 +372,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @param toolbar
 	 *            toolbar instance
 	 */
-	public void addHeaderToolbar(AbstractHeaderToolbar<M, I> toolbar)
+	public void addHeaderToolbar(AbstractHeaderToolbar<M, I, S> toolbar)
 	{
 		addToolbar(toolbar, headerToolbarContainer);
 	}
@@ -417,7 +407,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 			}
 			return result.toString();
 		}
-	};
+	}
 
 	/**
 	 * Component that represents the grid header.
@@ -425,9 +415,8 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * @see ColumnsHeader
 	 * @author Matej Knopp
 	 */
-	private class Header extends ColumnsHeader<M, I>
+	private class Header extends ColumnsHeader<M, I, S>
 	{
-
 		private static final long serialVersionUID = 1L;
 
 		private Header(String id)
@@ -436,19 +425,19 @@ public abstract class AbstractGrid<M, I> extends Panel
 		}
 
 		@Override
-		Collection<IGridColumn<M, I>> getActiveColumns()
+		Collection<IGridColumn<M, I, S>> getActiveColumns()
 		{
 			return AbstractGrid.this.getActiveColumns();
 		}
 
 		@Override
-		int getColumnWidth(IGridColumn<M, I> column)
+		int getColumnWidth(IGridColumn<M, I, S> column)
 		{
 			int width = getColumnState().getColumnWidth(column.getId());
 			if (width != -1 && column.getSizeUnit() == SizeUnit.PX)
-				return width;
+      {	return width; }
 			else
-				return column.getInitialSize();
+      { return column.getInitialSize(); }
 		}
 
 		@Override
@@ -457,7 +446,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 			onSortStateChanged(target);
 		}
 
-	};
+	}
 
 	/**
 	 * Invoked when sort state of this grid has changed (e.g. user clicked a sortable column
@@ -483,9 +472,9 @@ public abstract class AbstractGrid<M, I> extends Panel
 
 		// initialize the columns
 		sb.append("var columns = [\n");
-		Collection<IGridColumn<M, I>> columns = getActiveColumns();
+		Collection<IGridColumn<M, I, S>> columns = getActiveColumns();
 		int i = 0;
-		for (IGridColumn<M, I> column : columns)
+		for (IGridColumn<M, I, S> column : columns)
 		{
 			++i;
 			sb.append("  {");
@@ -501,13 +490,13 @@ public abstract class AbstractGrid<M, I> extends Panel
 			}
 			sb.append("\n");
 		}
-		;
+
 		sb.append("];\n");
 
 		// method that calls the proper listener when column state is changed
-		sb.append("var submitStateCallback = function(columnState) { ");
+		sb.append("var submitStateCallback = ");
 		sb.append(submitColumnStateBehavior.getCallbackScript());
-		sb.append(" }\n");
+		sb.append("\n");
 
 		// initialization
 		sb.append("InMethod.XTableManager.instance.register(\"" + getMarkupId() +
@@ -515,14 +504,14 @@ public abstract class AbstractGrid<M, I> extends Panel
 		sb.append("})();\n");
 
 		return sb.toString();
-	};
+	}
 
 	/**
 	 * Returns collection of currently visible columns.
 	 * 
 	 * @return collection of currently visible columns
 	 */
-	public Collection<IGridColumn<M, I>> getActiveColumns()
+	public Collection<IGridColumn<M, I, S>> getActiveColumns()
 	{
 		return getColumnState().getVisibleColumns(columns);
 	}
@@ -532,15 +521,15 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * 
 	 * @return list of columns
 	 */
-	public List<IGridColumn<M, I>> getAllColumns()
+	public List<IGridColumn<M, I, S>> getAllColumns()
 	{
 		return Collections.unmodifiableList(columns);
 	}
 
 	// contains all columns
-	private final List<IGridColumn<M, I>> columns;
+	private final List<IGridColumn<M, I, S>> columns;
 
-	private GridSortState sortState = null;
+	private GridSortState<S> sortState = null;
 
 	/**
 	 * Returns the sort state of this grid.
@@ -550,14 +539,14 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * 
 	 * @return sort state
 	 */
-	public GridSortState getSortState()
+	public GridSortState<S> getSortState()
 	{
 		if (sortState == null)
 		{
-			sortState = new GridSortState(this);
+			sortState = new GridSortState<S>(this);
 		}
 		return sortState;
-	};
+	}
 
 	/**
 	 * Constant for the Vista theme (default).
@@ -623,16 +612,33 @@ public abstract class AbstractGrid<M, I> extends Panel
 		}
 	}
 
-	private static final JavaScriptResourceReference JS_YAHOO = new JavaScriptResourceReference(
-		AbstractGrid.class, "res/yahoo.js");
-	private static final JavaScriptResourceReference JS_EVENT = new JavaScriptResourceReference(
-		AbstractGrid.class, "res/event.js");
-	private static final JavaScriptResourceReference JS_DOM = new JavaScriptResourceReference(
-		AbstractGrid.class, "res/dom.js");
-	private static final JavaScriptResourceReference JS_SCRIPT = new JavaScriptResourceReference(
-		AbstractGrid.class, "res/script.js");
-	private static final PackageResourceReference CSS = new PackageResourceReference(
-		AbstractGrid.class, "res/style.css");
+	public static final JavaScriptResourceReference JS_YAHOO =
+                           new JavaScriptResourceReference(AbstractGrid.class,
+                                                           "res/yahoo.js");
+	public static final JavaScriptResourceReference JS_EVENT =
+                           new JavaScriptResourceReference(AbstractGrid.class,
+                                                           "res/event.js");
+	public static final JavaScriptResourceReference JS_DOM =
+                           new JavaScriptResourceReference(AbstractGrid.class,
+                                                           "res/dom.js");
+	
+	public static final JavaScriptResourceReference JS_SCRIPT =
+            new JavaScriptResourceReference(AbstractGrid.class,
+                                            "res/script.js");
+	
+	public static final JavaScriptResourceReference JS_SCRIPT_JQ =
+                           new JavaScriptResourceReference(AbstractGrid.class,
+                                                           "res/script-jq.js");
+	public static final PackageResourceReference CSS =
+                              new PackageResourceReference(AbstractGrid.class,
+                                                           "res/style.css");
+	
+	
+	/**
+	 * Flag to set/un-set the use of YUI as backing JS library. Its default is false and jquery is 
+	 * used as backing JS library.
+	 */
+	private boolean useYui = false;
 
 	/**
 	 * {@inheritDoc}
@@ -641,10 +647,15 @@ public abstract class AbstractGrid<M, I> extends Panel
 	public void renderHead(IHeaderResponse response)
 	{
 		CoreLibrariesContributor.contributeAjax(getApplication(), response);
-		response.render(JavaScriptHeaderItem.forReference(JS_YAHOO));
-		response.render(JavaScriptHeaderItem.forReference(JS_EVENT));
-		response.render(JavaScriptHeaderItem.forReference(JS_DOM));
-		response.render(JavaScriptHeaderItem.forReference(JS_SCRIPT));
+		if(isUseYui()) {
+			response.render(JavaScriptHeaderItem.forReference(JS_YAHOO));
+			response.render(JavaScriptHeaderItem.forReference(JS_EVENT));
+			response.render(JavaScriptHeaderItem.forReference(JS_DOM));
+			response.render(JavaScriptHeaderItem.forReference(JS_SCRIPT));
+		} else {
+			// jquery is already part of Wicket. So there is nothing more to include.
+			response.render(JavaScriptHeaderItem.forReference(JS_SCRIPT_JQ));
+		}
 		response.render(CssHeaderItem.forReference(CSS));
 	}
 
@@ -733,9 +744,9 @@ public abstract class AbstractGrid<M, I> extends Panel
 
 	private String lastClickedColumn = null;
 
-	public IGridColumn<M, I> getLastClickedColumn()
+	public IGridColumn<M, I, S> getLastClickedColumn()
 	{
-		for (IGridColumn<M, I> column : columns)
+		for (IGridColumn<M, I, S> column : columns)
 		{
 			if (column.getId().equals(lastClickedColumn))
 			{
@@ -748,7 +759,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	public void cleanLastClickedColumn()
 	{
 		lastClickedColumn = null;
-	};
+	}
 
 	protected boolean disableRowClickNotifications()
 	{
@@ -762,13 +773,10 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 */
 	protected void onRowPopulated(final WebMarkupContainer rowComponent)
 	{
+		if (disableRowClickNotifications()) { return; }
 
-		if (disableRowClickNotifications())
-			return;
-
-		rowComponent.add(new AjaxFormSubmitBehavior(getForm(), "onclick")
+		rowComponent.add(new AjaxFormSubmitBehavior(getForm(), "click")
 		{
-
 			private static final long serialVersionUID = 1L;
 
 			@Override
@@ -783,40 +791,38 @@ public abstract class AbstractGrid<M, I> extends Panel
 
 			}
 
+			@SuppressWarnings("unchecked")
 			@Override
 			protected void onEvent(AjaxRequestTarget target)
-			{
-
-				// preserve the entered values in form components
+			{	// preserve the entered values in form components
 				Form<?> form = super.getForm();
 				form.visitFormComponentsPostOrder(new IVisitor<FormComponent<?>, Void>()
-				{
-
-					public void component(FormComponent<?> formComponent, IVisit<Void> visit)
-					{
-						if (formComponent.isVisibleInHierarchy())
-						{
-							formComponent.inputChanged();
-						}
-					}
-				});
+                                              {
+                                                public void component(FormComponent<?> formComponent,
+                                                                      IVisit<Void> visit)
+                                                {
+                                                  if (formComponent.isVisibleInHierarchy())
+                                                  {
+                                                    formComponent.inputChanged();
+                                                  }
+                                                }
+                                              });
 
 				String column = getRequest().getRequestParameters()
-					.getParameterValue("column")
-					.toString();
+                                    .getParameterValue("column").toString();
 
 				lastClickedColumn = column;
 
 				IModel<I> model = (IModel<I>)rowComponent.getDefaultModel();
 
-				IGridColumn<M, I> lastClickedColumn = getLastClickedColumn();
+				IGridColumn<M, I, S> lastClickedColumn = getLastClickedColumn();
 				if (lastClickedColumn != null)
 				{
-					if (onCellClicked(target, model, lastClickedColumn) == true)
+					if (onCellClicked(target, model, lastClickedColumn))
 					{
 						return;
 					}
-					if (lastClickedColumn.cellClicked(model) == true)
+					if (lastClickedColumn.cellClicked(model))
 					{
 						return;
 					}
@@ -824,38 +830,32 @@ public abstract class AbstractGrid<M, I> extends Panel
 
 				onRowClicked(target, model);
 			}
-
-			@Override
-			public CharSequence getCallbackUrl()
+      
+      @Override
+			protected void updateAjaxAttributes(AjaxRequestAttributes attributes)
 			{
-				return super.getCallbackUrl() + "&column='+col+'";
+				super.updateAjaxAttributes(attributes);
+
+				CharSequence columnParameter = "return {'column': Wicket.$(attrs.c).imxtClickedColumn}";
+				attributes.getDynamicExtraParameters().add(columnParameter);
+
+				CharSequence precondition = "return InMethod.XTable.canSelectRow(attrs.event);";
+				AjaxCallListener ajaxCallListener = new AjaxCallListener();
+				ajaxCallListener.onPrecondition(precondition);
+				attributes.setAllowDefault(true);
+				attributes.getAjaxCallListeners().add(ajaxCallListener);
 			}
-
-			@Override
-			protected IAjaxCallDecorator getAjaxCallDecorator()
+      
+      @Override
+			public CharSequence getCallbackScript()
 			{
-				return new AjaxCallDecorator()
-				{
-
-					private static final long serialVersionUID = 1L;
-
-					@Override
-					public CharSequence decorateScript(Component c, CharSequence script)
-					{
-						return super.decorateScript(
-							c,
-							"if (InMethod.XTable.canSelectRow(event)) { " +
-								"var col=(this.imxtClickedColumn || ''); this.imxtClickedColumn='';" +
-								script + " }");
-					}
-				};
+				return getCallbackFunction(CallbackParameter.context("col"));
 			}
 		});
-
 	}
 
 	protected boolean onCellClicked(AjaxRequestTarget target, IModel<I> rowModel,
-		IGridColumn<M, I> column)
+		                              IGridColumn<M, I, S> column)
 	{
 		return false;
 	}
@@ -885,7 +885,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 *            <code>false</code> otherwise.
 	 * @return <code>this</code> (useful for method chaining)
 	 */
-	public AbstractGrid<M, I> setClickRowToSelect(boolean clickRowToSelect)
+	public AbstractGrid<M, I, S> setClickRowToSelect(boolean clickRowToSelect)
 	{
 		this.clickRowToSelect = clickRowToSelect;
 		return this;
@@ -996,7 +996,7 @@ public abstract class AbstractGrid<M, I> extends Panel
 	 * Marks the item from the given model as dirty. Dirty items are updated during Ajax requests
 	 * when {@link AbstractGrid#update()} method is called.
 	 * 
-	 * @param itemModel
+	 * @param model
 	 *            model used to access the item
 	 */
 	public abstract void markItemDirty(IModel<I> model);
@@ -1087,5 +1087,13 @@ public abstract class AbstractGrid<M, I> extends Panel
 				return false;
 			}
 		}
+	}
+
+	public boolean isUseYui() {
+		return useYui;
+	}
+
+	public void setUseYui(boolean useYui) {
+		this.useYui = useYui;
 	}
 }
